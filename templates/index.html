@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>🧠 Нейро-символический решатель</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="app-container">
+    <header class="app-header">
+        <h1>🧠 Нейро-символический решатель</h1>
+        <p>Комбинирует мощь LLM с логической строгостью символических алгоритмов</p>
+    </header>
+    <main class="app-main">
+        <section class="input-section">
+            <h2>📝 Введите задачу</h2>
+            <div class="examples">
+                <button class="example-btn" onclick="loadExample(0)">Сократ</button>
+                <button class="example-btn" onclick="loadExample(1)">Птицы</button>
+                <button class="example-btn" onclick="loadExample(2)">Студенты</button>
+            </div>
+            <textarea id="taskInput" placeholder="Ваша логическая задача..."></textarea>
+            <button id="solveBtn" onclick="solveProblem()">🚀 Решить задачу</button>
+        </section>
+        <section class="results-section">
+            <h2>✅ Результаты</h2>
+            <div class="result-block">
+                <h3>📋 Формализация</h3>
+                <pre id="formulasOutput"></pre>
+            </div>
+            <div class="result-block">
+                <h3>🔍 Результат доказательства</h3>
+                <p id="proofResult"></p>
+                <p id="stepsCount"></p>
+            </div>
+            <div class="result-block">
+                <h3>📖 Пошаговое доказательство</h3>
+                <pre id="proofSteps"></pre>
+            </div>
+            <div class="result-block">
+                <h3>💡 Объяснение на русском</h3>
+                <pre id="explanationOutput"></pre>
+            </div>
+            <div class="result-block error-block" id="errorBlock" style="display:none;">
+                <h3>⚠️ Ошибка</h3>
+                <pre id="errorOutput"></pre>
+            </div>
+        </section>
+    </main>
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
