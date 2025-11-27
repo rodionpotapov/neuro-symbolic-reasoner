@@ -1,87 +1,144 @@
+"""
+Модуль для работы с логическими формулами.
+Включает AST (абстрактное синтаксическое дерево), парсер и все преобразования
+для метода резолюций: удаление импликаций, ПНФ, сколемизация, КНФ.
+"""
+
 import re
 import itertools
 from typing import List, Set, Dict, Union, Optional
 
-# ========== AST (abstract syntax tree) структуры ==========
 
-class Node: pass
+# ========== AST-узлы: представление формулы в памяти ==========
+
+class Node:
+    """Базовый класс для всех узлов формулы."""
+    pass
+
 
 class Var(Node):
+    """Переменная логики предикатов (x, y, z)."""
     def __init__(self, name: str):
         self.name = name
-    def __repr__(self): return self.name
-
-class Const(Node):
-    def __init__(self, name: str):
-        self.name = name
-    def __repr__(self): return self.name
-
-class Function(Node):
-    """Терм — функция (используется для сколемовых функций)."""
-    def __init__(self, name: str, args: List[Node]):
-        self.name = name
-        self.args = args
     def __repr__(self):
-        if self.args:
-            return f"{self.name}({','.join(map(str,self.args))})"
         return self.name
 
-class Predicate(Node):
+
+class Const(Node):
+    """Константа — конкретный объект (Сократ, Вася)."""
+    def __init__(self, name: str):
+        self.name = name
+    def __repr__(self):
+        return self.name
+
+
+class Function(Node):
+    """
+    Функциональный терм, например father(x) или sk1(x,y).
+    Используется в основном для сколемовских функций.
+    """
     def __init__(self, name: str, args: List[Node]):
         self.name = name
         self.args = args
-    def __repr__(self): return "%s(%s)" % (self.name, ",".join(map(str, self.args)))
+    
+    def __repr__(self):
+        if self.args:
+            return f"{self.name}({','.join(map(str, self.args))})"
+        return self.name
+
+
+class Predicate(Node):
+    """Предикат: Человек(x), Смертен(Сократ)."""
+    def __init__(self, name: str, args: List[Node]):
+        self.name = name
+        self.args = args
+    
+    def __repr__(self):
+        return f"{self.name}({','.join(map(str, self.args))})"
+
 
 class Not(Node):
+    """Отрицание: ¬A."""
     def __init__(self, child: Node):
         self.child = child
-    def __repr__(self): return f"¬{self.child}"
+    
+    def __repr__(self):
+        return f"¬{self.child}"
+
 
 class And(Node):
+    """Конъюнкция: A ∧ B ∧ C."""
     def __init__(self, children: List[Node]):
         self.children = children
-    def __repr__(self): return "(" + " ∧ ".join(map(str, self.children)) + ")"
+    
+    def __repr__(self):
+        return "(" + " ∧ ".join(map(str, self.children)) + ")"
+
 
 class Or(Node):
+    """Дизъюнкция: A ∨ B ∨ C."""
     def __init__(self, children: List[Node]):
         self.children = children
-    def __repr__(self): return "(" + " ∨ ".join(map(str, self.children)) + ")"
+    
+    def __repr__(self):
+        return "(" + " ∨ ".join(map(str, self.children)) + ")"
+
 
 class Implies(Node):
+    """Импликация: A → B."""
     def __init__(self, left: Node, right: Node):
         self.left = left
         self.right = right
-    def __repr__(self): return f"({self.left} → {self.right})"
+    
+    def __repr__(self):
+        return f"({self.left} → {self.right})"
+
 
 class ForAll(Node):
+    """Универсальный квантор: ∀x body."""
     def __init__(self, var: str, body: Node):
         self.var = var
         self.body = body
-    def __repr__(self): return f"(∀{self.var} {self.body})"
+    
+    def __repr__(self):
+        return f"(∀{self.var} {self.body})"
+
 
 class Exists(Node):
+    """Квантор существования: ∃x body."""
     def __init__(self, var: str, body: Node):
         self.var = var
         self.body = body
-    def __repr__(self): return f"(∃{self.var} {self.body})"
+    
+    def __repr__(self):
+        return f"(∃{self.var} {self.body})"
 
 
-# ========== Парсер строк формул ("¬Человек(x) ∨ Смертен(x)") → AST ==========
+# ========== Парсер: строка → AST ==========
 
 def parse_formula(s: str) -> Node:
-    s = s.replace(" ", "")
+    """
+    Парсит строку формулы в AST.
+    Вход: "∀x (Человек(x) → Смертен(x))"
+    Выход: дерево из узлов ForAll, Implies, Predicate и т.п.
+    """
+    s = s.replace(" ", "")  # убираем пробелы для удобства
 
     def parse_atom(atom):
+        """Парсит атомарный предикат вида Имя(арг1, арг2, ...)."""
         atom = atom.strip()
-        # Стандарт: Имя(арг1, ...)
+        
+        # Стандарт: Имя(...)
         m = re.match(r'^([A-Za-zА-Яа-яёЁ0-9_]+)\((.*)\)$', atom)
         if m:
             name = m.group(1)
             rest = m.group(2)
             args = []
+            
             if rest.strip() == "":
-                # ноль аргументов
                 return Predicate(name, [])
+            
+            # Разбиваем аргументы с учётом вложенных скобок
             parts = []
             depth = 0
             cur = ""
@@ -97,9 +154,10 @@ def parse_formula(s: str) -> Node:
                     cur += ch
             if cur:
                 parts.append(cur)
+            
+            # Каждый аргумент: заглавная буква → Const, иначе → Var
             for part in parts:
                 part = part.strip()
-                # Оставляем буквы и цифры/подчёркивания внутри имени переменной/константы
                 part = re.sub(r'[^A-Za-zА-Яа-яёЁ0-9_]', '', part)
                 if not part:
                     continue
@@ -107,15 +165,16 @@ def parse_formula(s: str) -> Node:
                     args.append(Const(part))
                 else:
                     args.append(Var(part))
+            
             return Predicate(name, args)
-        # Обычная атомарная строка без скобок — воспринимаем как предикат без аргументов
+        
+        # Если нет скобок — считаем это предикат без аргументов
         atom_no_parens = re.sub(r'[\(\)]', '', atom)
         atom_no_parens = re.sub(r'[^A-Za-zА-Яа-яёЁ0-9_]', '', atom_no_parens)
         return Predicate(atom_no_parens, [])
 
-    # Снимаем внешние скобки (только один уровень)
+    # Снятие внешних скобок
     if s.startswith("(") and s.endswith(")"):
-        # проверим совпадает ли скобочная пара (баланс)
         depth = 0
         balanced = True
         for i, ch in enumerate(s):
@@ -123,13 +182,13 @@ def parse_formula(s: str) -> Node:
                 depth += 1
             elif ch == ")":
                 depth -= 1
-            if depth == 0 and i < len(s)-1:
+            if depth == 0 and i < len(s) - 1:
                 balanced = False
                 break
         if balanced:
             s = s[1:-1]
 
-    # Кванторы: допускаем латинские и русские имена переменных (берём последовательность букв/цифр после квантора)
+    # Кванторы
     m = re.match(r'∀([A-Za-z0-9_]+)\((.+)\)$', s)
     if m:
         return ForAll(m.group(1), parse_formula(m.group(2)))
@@ -137,7 +196,7 @@ def parse_formula(s: str) -> Node:
     if m:
         return Exists(m.group(1), parse_formula(m.group(2)))
 
-    # Импликация — разбиваем только на верхнем уровне
+    # Импликация
     if "→" in s:
         parts = []
         depth = 0
@@ -158,11 +217,10 @@ def parse_formula(s: str) -> Node:
             parts.append(curr)
             if len(parts) >= 2:
                 return Implies(parse_formula(parts[0]), parse_formula("→".join(parts[1:])))
-        # fallback
         l, r = s.split("→", 1)
         return Implies(parse_formula(l), parse_formula(r))
 
-    # Дизъюнкция (только верхний уровень)
+    # Дизъюнкция
     if "∨" in s:
         parts = []
         depth = 0
@@ -181,7 +239,7 @@ def parse_formula(s: str) -> Node:
             parts.append(curr)
             return Or([parse_formula(p) for p in parts])
 
-    # Конъюнкция (только верхний уровень)
+    # Конъюнкция
     if "∧" in s:
         parts = []
         depth = 0
@@ -207,9 +265,13 @@ def parse_formula(s: str) -> Node:
     return parse_atom(s)
 
 
-# ========== Преобразования логических формул ==========
+# ========== Преобразования формул ==========
 
 def eliminate_implications(formula: Node):
+    """
+    Удаление импликаций: A → B превращается в ¬A ∨ B.
+    Стандартный первый шаг перед КНФ.
+    """
     if isinstance(formula, Implies):
         return Or([
             Not(eliminate_implications(formula.left)),
@@ -226,25 +288,35 @@ def eliminate_implications(formula: Node):
     else:
         return formula
 
+
 def move_nots_inwards(formula: Node):
+    """
+    Проталкивание отрицаний внутрь (законы Де Моргана).
+    Цель: ¬ должны стоять только перед предикатами.
+    """
     if isinstance(formula, Not):
         child = formula.child
-        # двойное отрицание
+        
+        # Двойное отрицание: ¬¬A = A
         if isinstance(child, Not):
             return move_nots_inwards(child.child)
-        # Де Морган
+        
+        # Де Морган: ¬(A ∧ B) = ¬A ∨ ¬B
         if isinstance(child, And):
             return Or([move_nots_inwards(Not(c)) for c in child.children])
+        
+        # Де Морган: ¬(A ∨ B) = ¬A ∧ ¬B
         if isinstance(child, Or):
             return And([move_nots_inwards(Not(c)) for c in child.children])
-        # Кванторы: инвертируем квантор при отрицании
+        
+        # Отрицание кванторов: ¬∀x P = ∃x ¬P, ¬∃x P = ∀x ¬P
         if isinstance(child, ForAll):
-            # ¬∀x P = ∃x ¬P
             return Exists(child.var, move_nots_inwards(Not(child.body)))
         if isinstance(child, Exists):
-            # ¬∃x P = ∀x ¬P
             return ForAll(child.var, move_nots_inwards(Not(child.body)))
+        
         return Not(move_nots_inwards(child))
+    
     elif isinstance(formula, (And, Or)):
         return type(formula)([move_nots_inwards(c) for c in formula.children])
     elif isinstance(formula, (ForAll, Exists)):
@@ -254,8 +326,12 @@ def move_nots_inwards(formula: Node):
 
 
 def prenex_normal_form(formula: Node):
-    """Кванторы наружу (простая версия)"""
+    """
+    Пренексная нормальная форма: все кванторы выносятся в префикс.
+    Например: ∀x (P(x) ∧ ∃y Q(x,y)) → ∀x ∃y (P(x) ∧ Q(x,y))
+    """
     def pull(formula):
+        """Рекурсивно вытягивает кванторы наружу."""
         if isinstance(formula, (And, Or)):
             qs = []
             new_children = []
@@ -265,38 +341,52 @@ def prenex_normal_form(formula: Node):
                 qs += qs1
             result = type(formula)(new_children)
             return result, qs
+        
         if isinstance(formula, (ForAll, Exists)):
             subf, qs = pull(formula.body)
-            # добавляем текущий квантор в список (в конец — порядок восстанавливается позже)
             return subf, qs + [(type(formula), formula.var)]
+        
         return formula, []
+    
     core, qs = pull(formula)
+    # Оборачиваем ядро кванторами в обратном порядке
     for Q, var in reversed(qs):
         core = Q(var, core)
     return core
 
+
 # ========== Сколемизация ==========
 
-skolem_count = itertools.count(1)
+skolem_count = itertools.count(1)  # генератор имён sk1, sk2, ...
+
 def skolemize(formula, env=None):
     """
-    Перевод формулы в сколемовскую форму: экзистенциальные кванторы заменяются функциями/константами,
-    универсальные — остаются, но переменные фиксируются.
+    Сколемизация: убираем ∃, заменяя их на новые функции/константы.
+    Пример: ∀x ∃y P(x,y) → ∀x P(x, sk1(x))
     """
     if env is None:
         env = []
+    
+    # Универсальный квантор: добавляем переменную в окружение
     if isinstance(formula, ForAll):
         return ForAll(formula.var, skolemize(formula.body, env + [formula.var]))
+    
+    # Экзистенциальный квантор: заменяем на сколемовскую функцию/константу
     if isinstance(formula, Exists):
-        # Каждая новая переменная — функция от окружения
         num = next(skolem_count)
         name = f"sk{num}"
+        
         if env:
+            # Если есть внешние ∀ → функция от них
             args = [Var(var) for var in env]
             replacement = Function(name, args)
         else:
+            # Иначе → константа
             replacement = Const(name)
+        
+        # Подставляем во всю формулу и продолжаем сколемизацию
         return skolemize(substitute(formula.body, formula.var, replacement), env)
+    
     if isinstance(formula, (And, Or)):
         return type(formula)([skolemize(c, env) for c in formula.children])
     if isinstance(formula, Not):
@@ -304,8 +394,9 @@ def skolemize(formula, env=None):
     else:
         return formula
 
+
 def substitute(formula, var, term):
-    # Traverse and replace all Var(var) with term
+    """Заменяет все вхождения переменной var на терм term."""
     if isinstance(formula, Var):
         return term if formula.name == var else formula
     elif isinstance(formula, Const):
@@ -320,21 +411,29 @@ def substitute(formula, var, term):
         return Not(substitute(formula.child, var, term))
     elif isinstance(formula, (ForAll, Exists)):
         if formula.var == var:
-            return formula
+            return formula  # не заходим внутрь — новая область видимости
         return type(formula)(formula.var, substitute(formula.body, var, term))
     else:
         return formula
 
+
 # ========== КНФ ==========
 
 def distribute_or_over_and(f):
+    """
+    Распределение ∨ над ∧: (A ∧ B) ∨ C = (A ∨ C) ∧ (B ∨ C).
+    Нужно для получения КНФ.
+    """
     if isinstance(f, (Predicate, Var, Const, Function, Not)):
         return f
+    
     if isinstance(f, And):
         return And([distribute_or_over_and(c) for c in f.children])
+    
     if isinstance(f, Or):
         children = [distribute_or_over_and(c) for c in f.children]
-        # ищем конъюнкцию среди детей (правило распределения)
+        
+        # Ищем конъюнкцию среди детей
         for i, c in enumerate(children):
             if isinstance(c, And):
                 rest = [ch for j, ch in enumerate(children) if j != i]
@@ -343,25 +442,38 @@ def distribute_or_over_and(f):
                     new_or = Or([conj_part] + rest)
                     new_and_children.append(distribute_or_over_and(new_or))
                 return And(new_and_children)
+        
         return Or(children)
+    
     return f
 
+
 def to_cnf(formula):
+    """
+    Преобразование в КНФ (конъюнктивная нормальная форма).
+    Возвращает список клауз, где каждая клауза — список литералов-строк.
+    """
+    # Универсальные кванторы на этом этапе можно убрать
     if isinstance(formula, ForAll):
         return to_cnf(formula.body)
+    
+    # Распределяем ∨ над ∧
     f = distribute_or_over_and(formula)
+    
     def extract_literals(expr):
+        """Извлекает литералы из дизъюнкции."""
         if isinstance(expr, Or):
             res = []
             for c in expr.children:
                 res += extract_literals(c)
             return res
         elif isinstance(expr, And):
-            raise Exception("And внутри Or — ошибка КНФ.")
+            raise Exception("And внутри Or — ошибка КНФ")
         else:
-            # возвращаем строковое представление литерала
             return [str(expr)]
+    
     def flatten_and(expr):
+        """Разворачивает вложенные And в плоский список."""
         if isinstance(expr, And):
             result = []
             for c in expr.children:
@@ -369,6 +481,7 @@ def to_cnf(formula):
             return result
         else:
             return [expr]
+    
     clauses = flatten_and(f)
     result = []
     for clause in clauses:
